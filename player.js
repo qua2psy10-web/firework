@@ -1,8 +1,9 @@
 const $=id=>document.getElementById(id);
-let svg,ctx,master,playing=false,pos=0,anchor=0,active=[];
+let renderer,svg,ctx,master,playing=false,pos=0,anchor=0,active=[];
 const cues=SHOW.flatMap(s=>[{t:s.t,type:'launch',s},{t:s.t+1.43,type:'burst',s}]).sort((a,b)=>a.t-b.t);
-let next=0;
-$('scene').addEventListener('load',()=>{svg=$('scene').contentDocument.documentElement;svg.pauseAnimations();svg.setCurrentTime(0);$('play').disabled=false;});
+let next=0, playRequest=0;
+const noiseBuffers=new Map();
+$('scene').addEventListener('load',()=>{svg=$('scene').contentDocument.documentElement;svg.pauseAnimations();svg.setCurrentTime(0);renderer=createFireworkRenderer(svg,SHOW);$('play').disabled=false;});
 function initAudio(){if(ctx)return;ctx=new(window.AudioContext||window.webkitAudioContext)();master=ctx.createGain();master.gain.value=+$('volume').value*.6;const compressor=ctx.createDynamicsCompressor();compressor.threshold.value=-18;compressor.ratio.value=8;master.connect(compressor);compressor.connect(ctx.destination);}
 // A clear tonal whistle follows the 1.35-second ascent, fading before the burst.
 function launchWhistle(shell){
@@ -30,13 +31,42 @@ function launchWhistle(shell){
  tone.start(now);vibrato.start(now);
  tone.stop(now+duration);vibrato.stop(now+duration);
 }
-function sound(cue){if(cue.type==='launch')launchWhistle(cue.s);const when=ctx.currentTime,s=cue.s,burst=cue.type==='burst',duration=burst?2.7:1.25;const n=Math.ceil(ctx.sampleRate*duration),buffer=ctx.createBuffer(1,n,ctx.sampleRate),data=buffer.getChannelData(0);for(let i=0;i<n;i++){let t=i/ctx.sampleRate;data[i]=(Math.random()*2-1)*(burst?Math.exp(-t*3.6)*(1+.2*Math.sin(t*190)):Math.sin(Math.PI*t/duration)*.23);}const source=ctx.createBufferSource();source.buffer=buffer;const filter=ctx.createBiquadFilter();filter.type=burst?'lowpass':'bandpass';filter.frequency.setValueAtTime(burst?2800:850,when);filter.frequency.exponentialRampToValueAtTime(burst?100:1700,when+duration);const gain=ctx.createGain();gain.gain.value=burst?.45+s.r/600:.17;const pan=ctx.createStereoPanner();pan.pan.value=(s.x/800-1)*.75;source.connect(filter);filter.connect(gain);gain.connect(pan);pan.connect(master);source.start();active.push(source);source.onended=()=>{active=active.filter(x=>x!==source);source.disconnect();filter.disconnect();gain.disconnect();pan.disconnect();};if(burst){const osc=ctx.createOscillator(),g=ctx.createGain();osc.frequency.setValueAtTime(70,when);osc.frequency.exponentialRampToValueAtTime(24,when+.6);g.gain.setValueAtTime(.45,when);g.gain.exponentialRampToValueAtTime(.001,when+1.3);osc.connect(g);g.connect(pan);osc.start();osc.stop(when+1.4);active.push(osc);osc.onended=()=>{active=active.filter(x=>x!==osc);osc.disconnect();g.disconnect();};}}
+function sound(cue){if(cue.type==='launch')launchWhistle(cue.s);const when=ctx.currentTime,s=cue.s,burst=cue.type==='burst',duration=burst?2.7:1.25;const key=burst?'burst':'launch';let buffer=noiseBuffers.get(key);if(!buffer){const n=Math.ceil(ctx.sampleRate*duration);buffer=ctx.createBuffer(1,n,ctx.sampleRate);const data=buffer.getChannelData(0);for(let i=0;i<n;i++){const t=i/ctx.sampleRate;data[i]=(Math.random()*2-1)*(burst?Math.exp(-t*3.6)*(1+.2*Math.sin(t*190)):Math.sin(Math.PI*t/duration)*.23);}noiseBuffers.set(key,buffer);}const source=ctx.createBufferSource();source.buffer=buffer;const filter=ctx.createBiquadFilter();filter.type=burst?'lowpass':'bandpass';filter.frequency.setValueAtTime(burst?2800:850,when);filter.frequency.exponentialRampToValueAtTime(burst?100:1700,when+duration);const gain=ctx.createGain();gain.gain.value=burst?.45+s.r/600:.17;const pan=ctx.createStereoPanner();pan.pan.value=(s.x/800-1)*.75;source.connect(filter);filter.connect(gain);gain.connect(pan);pan.connect(master);source.start();active.push(source);source.onended=()=>{active=active.filter(x=>x!==source);source.disconnect();filter.disconnect();gain.disconnect();pan.disconnect();};if(burst){const osc=ctx.createOscillator(),g=ctx.createGain();osc.frequency.setValueAtTime(70,when);osc.frequency.exponentialRampToValueAtTime(24,when+.6);g.gain.setValueAtTime(.45,when);g.gain.exponentialRampToValueAtTime(.001,when+1.3);osc.connect(g);g.connect(pan);osc.start();osc.stop(when+1.4);active.push(osc);osc.onended=()=>{active=active.filter(x=>x!==osc);osc.disconnect();g.disconnect();};}}
 function hush(){active.forEach(s=>{try{s.stop()}catch{}});active=[];}
 function cursor(){next=cues.findIndex(c=>c.t>=pos);if(next<0)next=cues.length;}
-function draw(){if(svg)svg.setCurrentTime(pos);$('seek').value=pos;$('time').textContent=`${Math.floor(pos/60)}:${String(Math.floor(pos%60)).padStart(2,'0')} / 1:00`;$('phase').textContent=pos<13?'第一章　尺玉':pos<28?'第二章　彩りの大輪':pos<42?'第三章　夜空いっぱいに':pos<59.5?'終章　スターマイン':'余韻';}
-async function play(){if(!svg)return;initAudio();await ctx.resume();if(pos>=60)pos=0;cursor();anchor=performance.now()-pos*1000;playing=true;$('cover').hidden=true;$('play').textContent='一時停止';}
-function pause(){playing=false;hush();$('play').textContent='再生';}
-$('start').onclick=play;$('play').onclick=()=>playing?pause():play();$('restart').onclick=()=>{pause();pos=0;draw();play()};$('seek').oninput=()=>{hush();pos=+$('seek').value;anchor=performance.now()-pos*1000;cursor();draw()};$('volume').oninput=()=>{if(master)master.gain.setTargetAtTime(+$('volume').value*.6,ctx.currentTime,.02)};
+function draw(){$('seek').value=pos;$('time').textContent=`${Math.floor(pos/60)}:${String(Math.floor(pos%60)).padStart(2,'0')} / 1:00`;$('phase').textContent=pos<13?'第一章　尺玉':pos<28?'第二章　彩りの大輪':pos<42?'第三章　夜空いっぱいに':pos<59.5?'終章　スターマイン':'余韻';}
+async function play(){
+ if(!svg||playing)return;
+ const request=++playRequest;
+ try{initAudio();await ctx.resume();}catch(error){console.warn('Audio unavailable; continuing animation',error);}
+ if(request!==playRequest)return;
+ if(pos>=60)pos=0;
+ cursor();anchor=performance.now()-pos*1000;renderer.render(pos);
+ playing=true;$('cover').hidden=true;$('play').textContent='一時停止';
+}
+function pause(){
+ ++playRequest;
+ if(playing)pos=Math.min(60,(performance.now()-anchor)/1000);
+ if(renderer)renderer.render(pos);
+ playing=false;hush();draw();$('play').textContent='再生';
+}
+$('start').onclick=play;$('play').onclick=()=>playing?pause():play();$('restart').onclick=()=>{pause();pos=0;renderer.render(0);draw();play()};$('seek').oninput=()=>{hush();pos=+$('seek').value;anchor=performance.now()-pos*1000;if(renderer)renderer.render(pos);cursor();draw()};$('volume').oninput=()=>{if(master)master.gain.setTargetAtTime(+$('volume').value*.6,ctx.currentTime,.02)};
 $('full').onclick=async()=>{if(document.fullscreenElement)await document.exitFullscreen();else if($('stage').requestFullscreen)await $('stage').requestFullscreen();};
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&playing)pause()});
-function frame(now){if(playing){pos=Math.min(60,(now-anchor)/1000);while(next<cues.length&&cues[next].t<=pos){if(pos-cues[next].t<.15)sound(cues[next]);next++}draw();if(pos>=60){pause();$('heading').textContent='夜空に、余韻。';$('intro').textContent='60秒の花火をご覧いただき、ありがとうございました。';$('start').textContent='もう一度再生';$('cover').hidden=false;}}requestAnimationFrame(frame)}requestAnimationFrame(frame);
+// Draw only active shells at 30 fps; the monotonic clock keeps audio and the
+// 60-second ending independent of rendering delays.
+let lastPaint=-Infinity;
+function frame(){
+ requestAnimationFrame(frame);
+ if(!playing||!svg)return;
+ pos=Math.min(60,(performance.now()-anchor)/1000);
+ while(next<cues.length&&cues[next].t<=pos){
+  const cue=cues[next++];
+  if(pos-cue.t<.2&&ctx&&ctx.state==='running'){
+   try{sound(cue);}catch(error){console.warn('Skipped audio cue',error);}
+  }
+ }
+ if(pos>=60||performance.now()-lastPaint>=1000/30){renderer.render(pos);draw();lastPaint=performance.now();}
+ if(pos>=60){pause();pos=60;renderer.render(60);draw();$('heading').textContent='夜空に、余韻。';$('intro').textContent='60秒の花火をご覧いただき、ありがとうございました。';$('start').textContent='もう一度再生';$('cover').hidden=false;}
+}
+requestAnimationFrame(frame);

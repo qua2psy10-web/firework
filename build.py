@@ -20,6 +20,7 @@ for i in range(125):
  s.append(f'<circle cx="{x}" cy="{y}" r="{random.uniform(.4,1.3):.2f}" fill="#b7c8e9" opacity="{random.uniform(.15,.6):.2f}"/>')
 s.append('<path d="M0 707L95 678 170 696 260 661 365 690 450 651 565 699 680 679 780 707 930 669 1050 700 1190 663 1330 691 1450 665 1600 700V900H0Z" fill="#040810"/><path d="M0 744Q750 731 1600 747V900H0Z" fill="url(#water)"/>')
 for k,e in enumerate(shows):
+ s.append(f'<g data-firework="{k}">')
  t,x,y,r,c=e['t'],e['x'],e['y'],e['r'],e['color']; burst=t+1.35; duration=4.45 if e['kind']=='willow' else 3.4
  s.append(f'<g opacity="0"><animate attributeName="opacity" values="0;1;1;0" keyTimes="0;.05;.86;1" begin="{t}s" dur="1.4s" fill="freeze"/><path d="M{x-30} 745 Q{x-15} 470 {x} {y}" fill="none" stroke="{c}" stroke-width="2" pathLength="100" stroke-dasharray="9 100" stroke-dashoffset="9"><animate attributeName="stroke-dashoffset" from="9" to="-100" begin="{t}s" dur="1.35s" fill="freeze"/></path></g>')
  s.append(f'<circle cx="{x}" cy="{y}" r="{r*1.6}" fill="url(#halo)" opacity="0"><animate attributeName="opacity" values="0;1;0" keyTimes="0;.04;1" begin="{burst}s" dur="{duration}s" fill="freeze"/></circle>')
@@ -30,12 +31,35 @@ for k,e in enumerate(shows):
  def color_animation(attribute):
   return f'<animate attributeName="{attribute}" values="{sequence}" keyTimes="0;.18;.42;.68;1" calcMode="linear" begin="{burst}s" dur="{duration}s" fill="freeze"/>' if changing else ''
  s.append(color_animation('stroke'))
- for j in range(100 if e['kind']=='willow' else 78):
-  a=j*math.tau/(100 if e['kind']=='willow' else 78)+random.uniform(-.018,.018); rr=r*random.uniform(.82,1.06); dx=math.cos(a)*rr;dy=math.sin(a)*rr;fall=105 if e['kind']=='willow' else 58
-  d=f'M{x} {y} Q{x+dx*.8:.1f} {y+dy*.8:.1f} {x+dx:.1f} {y+dy+fall:.1f}'
-  s.append(f'<path d="{d}" stroke-width="{random.uniform(1.8,3.2):.1f}" pathLength="100" stroke-dasharray="1 2 1 3 2 3 1 4 2 100" stroke-dashoffset="22"><animate attributeName="stroke-dashoffset" values="22;-44;-73;-89" keyTimes="0;.22;.55;1" calcMode="spline" keySplines="0 .4 .4 1;0 0 1 1;0 0 1 1" begin="{burst}s" dur="{duration}s" fill="freeze"/></path>')
+ # Fibonacci sphere: stars exist at different depths, projected with perspective.
+ # Paint the far hemisphere first, then brighter/larger foreground stars.
+ count=144 if e['kind']=='willow' else 132
+ particles=[]
+ for j in range(count):
+  z=1-2*(j+.5)/count
+  angle=j*math.pi*(3-math.sqrt(5))+k*.7
+  ring=math.sqrt(1-z*z)
+  particles.append((z, math.cos(angle)*ring, math.sin(angle)*ring))
+ for j,(z,vx,vy) in enumerate(sorted(particles)):
+  rr=r*random.uniform(.94,1.04)
+  fall=110 if e['kind']=='willow' else 65
+  points=[]
+  for step in range(13):
+   u=step/12
+   perspective=1/(1-z*u*.27)
+   px=x+(vx*rr*u+z*rr*.07*u*u)*perspective
+   py=y+(vy*rr*u+fall*u*u)*perspective
+   points.append(f'{px:.1f} {py:.1f}')
+  d='M'+points[0]+' L'+' L'.join(points[1:])
+  width=1.05+(z+1)*1.25
+  opacity=.3+.7*((z+1)/2)**.7
+  # A soft wide trail under the nearest stars adds light without costly filters.
+  if z>.50:
+   s.append(f'<path d="{d}" opacity=".10" stroke-width="{width*3:.1f}" pathLength="100" stroke-dasharray="14 110" stroke-dashoffset="15"><animate attributeName="stroke-dashoffset" values="15;-43;-72;-88" keyTimes="0;.22;.55;1" calcMode="spline" keySplines="0 .4 .4 1;0 0 1 1;0 0 1 1" begin="{burst}s" dur="{duration}s" fill="freeze"/></path>')
+  s.append(f'<path data-depth="{z:.3f}" d="{d}" opacity="{opacity:.2f}" stroke-width="{width:.1f}" pathLength="100" stroke-dasharray="1 2 1 3 2 3 1 4 2 100" stroke-dashoffset="22"><animate attributeName="stroke-dashoffset" values="22;-44;-73;-89" keyTimes="0;.22;.55;1" calcMode="spline" keySplines="0 .4 .4 1;0 0 1 1;0 0 1 1" begin="{burst}s" dur="{duration}s" fill="freeze"/></path>')
  s.append('</g>')
  s.append(f'<ellipse cx="{x}" cy="807" rx="{r*.65}" ry="38" fill="{c}" opacity="0"><animate attributeName="opacity" values="0;.09;.035;0" keyTimes="0;.06;.5;1" begin="{burst}s" dur="{duration}s" fill="freeze"/>{color_animation("fill")}</ellipse>')
+ s.append('</g>')
 for i in range(40):
  y=748+i*3.9
  s.append(f'<path d="M0 {y}H1600" stroke="#040914" stroke-width="{random.uniform(1,3):.1f}" opacity=".7"/>')
@@ -53,8 +77,8 @@ html=html[:a]+svg+html[b:]
 html=html.replace('object{display:block','object,#inline-scene{display:block')
 js=(out/'player.js').read_text()
 a=js.index("$('scene').addEventListener");b=js.index('\nfunction initAudio',a)
-js=js[:a]+"svg=$('inline-scene');svg.pauseAnimations();svg.setCurrentTime(0);$('play').disabled=false;"+js[b:]
-html=html.replace('<script src="events.js"></script><script src="player.js"></script>', '<script>'+(out/'events.js').read_text()+js+'</script>')
+js=js[:a]+"svg=$('inline-scene');svg.pauseAnimations();svg.setCurrentTime(0);renderer=createFireworkRenderer(svg,SHOW);$('play').disabled=false;"+js[b:]
+html=html.replace('<script src="events.js"></script><script src="renderer.js"></script><script src="player.js"></script>', '<script>'+(out/'events.js').read_text()+(out/'renderer.js').read_text()+js+'</script>')
 (out/'花火・音付き.html').write_text(html)
 (out/'docs').mkdir(exist_ok=True)
 (out/'docs/index.html').write_text(html)
